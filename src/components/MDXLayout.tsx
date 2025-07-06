@@ -26,7 +26,7 @@ export default function Layout({children, pages, currentPage}: LayoutProps) {
       </head>
       <body>
         <header>
-          <img src={avatar} className="avatar" />
+          <img src={avatar} className="avatar" alt="" />
           <a href="/index.html">Devon's Blog</a>
         </header>
         <main>
