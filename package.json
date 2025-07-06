@@ -1,11 +1,17 @@
 {
-  "name": "parcel-react-static-starter",
+  "name": "blog",
   "private": true,
   "version": "0.0.0",
   "targets": {
     "react-static": {
-      "source": "src/pages/*",
-      "context": "react-server"
+      "source": [
+        "src/pages/*",
+        "src/pages/**/*"
+      ],
+      "context": "react-server",
+      "includeNodeModules": {
+        "tree-sitter-highlight": false
+      }
     }
   },
   "scripts": {
@@ -15,9 +21,12 @@
   "dependencies": {
     "@parcel/rsc": "^2.14.3",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "tree-sitter-highlight": "^1.0.1"
   },
   "devDependencies": {
+    "@parcel/packager-react-static": "2.15.4",
+    "@parcel/transformer-react-static": "2.15.4",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "parcel": "^2.14.0"

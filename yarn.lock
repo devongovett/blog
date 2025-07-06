@@ -380,6 +380,19 @@
   dependencies:
     "@parcel/plugin" "2.15.4"
 
+"@parcel/packager-react-static@2.15.4":
+  version "2.15.4"
+  resolved "https://registry.yarnpkg.com/@parcel/packager-react-static/-/packager-react-static-2.15.4.tgz#648831dad4d61910c8101ed5da39c2ebcd8d7446"
+  integrity sha512-NRVsx6ohj3pJzt1uona57jTKgpLuLhqUJVMmAoNLDJX4d1p0RDQeNgOSf6z0zlK2rHbuOU4FLozwrb40nua1xA==
+  dependencies:
+    "@parcel/node-resolver-core" "3.6.4"
+    "@parcel/plugin" "2.15.4"
+    "@parcel/rust" "2.15.4"
+    "@parcel/types" "2.15.4"
+    "@parcel/utils" "2.15.4"
+    nullthrows "^1.1.1"
+    rsc-html-stream "^0.0.6"
+
 "@parcel/packager-svg@2.15.4":
   version "2.15.4"
   resolved "https://registry.yarnpkg.com/@parcel/packager-svg/-/packager-svg-2.15.4.tgz#126c51f8c4555ce4b706c1dfef4a99e09ea93cbf"
@@ -675,6 +688,13 @@
     "@parcel/plugin" "2.15.4"
     "@parcel/utils" "2.15.4"
     react-refresh "^0.16.0"
+
+"@parcel/transformer-react-static@2.15.4":
+  version "2.15.4"
+  resolved "https://registry.yarnpkg.com/@parcel/transformer-react-static/-/transformer-react-static-2.15.4.tgz#d0daee79195c30c0041951a113eff7af77d77257"
+  integrity sha512-FJXEOj3/gUG4wIEBJPf2W7KvIooADa0XSHY6pL+Yv1KBlzIJanMndN4xR+NZ+78HkR7TSNBdxx9RkpLuUT+CyA==
+  dependencies:
+    "@parcel/plugin" "2.15.4"
 
 "@parcel/transformer-svg@2.15.4":
   version "2.15.4"
@@ -1327,6 +1347,11 @@ to-regex-range@^5.0.1:
   integrity sha512-65P7iz6X5yEr1cwcgvQxbbIw7Uk3gOy5dIdtZ4rDveLqhrdJP+Li/Hx6tyK0NEb+2GCyneCMJiGqrADCSNk8sQ==
   dependencies:
     is-number "^7.0.0"
+
+tree-sitter-highlight@^1.0.1:
+  version "1.0.1"
+  resolved "https://registry.yarnpkg.com/tree-sitter-highlight/-/tree-sitter-highlight-1.0.1.tgz#7b70bab6eb843ca5b6194ac1b22740c803b8c3cd"
+  integrity sha512-PKoUNRI++rVXLsiYP5s3Ro5TnamZ0+7GMIzTGiga0i4YsyWlleei9cdBjX1GWCSAreOw+fnhqCQF5bHChnY8KQ==
 
 tslib@^2.8.0:
   version "2.8.1"

@@ -1,0 +1,309 @@
+import Layout from '../../components/MDXLayout';
+export default Layout;
+
+export const description = 'Modern JavaScript bundlers commonly implement two optimizations: scope hoisting, and code splitting. In this post, I\'ll discuss how these are fundamentally at odds with each other.';
+export const date = '2025-07-06';
+
+# JavaScript scope hoisting is broken
+
+Most modern JavaScript bundlers implement an optimization called "scope hoisting". The idea is that rather than wrapping each bundled module in a function, a compiler concatenates the modules into a single scope. Say you have a program like this:
+
+```js
+// index.js
+import {add} from './math';
+
+console.log(add(2, 3));
+```
+
+```js
+// math.js
+export function add(a, b) {
+  return a + b;
+}
+```
+
+When scope hoisted, the output bundle would look like this:
+
+```js
+function add(a, b) {
+  return a + b;
+}
+
+console.log(add(2, 3));
+```
+
+The compiler renames any top-level variables that might conflict between the two modules, and concatenates them following the import statement order. This idea was popularized by [Rollup](https://rollupjs.org/), and is now implemented across many other bundlers (e.g. Parcel, ESBuild, etc.).
+
+In theory, this is a nice idea. The alternative, which was common before scope hoisting, is to wrap each module in a separate function.
+
+```js
+let modules = {
+  'index.js': (require, exports) => {
+    let {add} = require('math.js');
+    console.log(add(2, 3));
+  },
+  'math.js': (require, exports) => {
+    exports.add = function add(a, b) {
+      return a + b;
+    }
+  }
+}
+```
+
+This keeps the module scopes separate, but compared with scope hoisting, the bundle is larger, and there is extra indirection through `require` and `exports` objects at runtime.
+
+## Code splitting
+
+The problem with scope hoisting is that it is fundamentally at odds with code splitting. It works great when you are concatenating all of your dependencies into a single bundle. In that case, the imported code runs linearly, and simply replacing import statements with the code they import works correctly.
+
+Code splitting breaks this assumption. Most real-world applications have more than one entry point, e.g. multiple pages, dynamic `import()`, etc. These entry points usually have many common dependencies between them, e.g. frameworks like React, libraries like lodash, etc.
+
+Rather than starting from each entry point and inlining all dependencies, bundlers implement smart algorithms to automatically extract common modules between entries into separate bundles. This avoids duplicating code between pages, better utilizing the browser's HTTP cache.
+
+Let me illustrate with an example.
+
+```js
+// entry-a.js
+import React from 'react';
+import _ from 'lodash';
+
+export function EntryA() {
+  return <div>Entry A</div>;
+}
+```
+
+```js
+// entry-b.js
+import React from 'react';
+import _ from 'lodash';
+
+export function EntryB() {
+  return <div>Entry B</div>;
+}
+```
+
+A simple bundler would create two bundles:
+
+* `entry-a.js` + `react.js` + `lodash.js`
+* `entry-b.js` + `react.js` + `lodash.js`
+
+But this duplicates React and lodash in each entry. Instead, most bundlers split the common dependencies (React and lodash) into a separate bundle so it can be shared between entries:
+
+* `entry-a.js`
+* `entry-b.js`
+* `react.js` + `lodash.js`
+
+## Side effects
+
+Now getting back to scope hoisting. With code splitting, the bundler cannot simply inline import statements anymore. Now some of the modules might be in different bundles. So it might create a new import statement like this to import the shared bundle:
+
+```js
+// entry-a.bundle.js
+import {React, _} from 'shared.bundle.js';
+
+export function EntryA() {
+  return <div>Entry A</div>;
+}
+```
+
+```js
+// entry-b.bundle.js
+import {React, _} from 'shared.bundle.js';
+
+export function EntryB() {
+  return <div>Entry B</div>;
+}
+```
+
+```js
+// shared.bundle.js
+
+// ...
+export {React, _};
+```
+
+So far, so good.
+
+But JavaScript modules can have more than just exports. They can have arbitrary statements: function calls, variable assignments, etc. These can have *side effects* on the execution environment. Therefore, JavaScript modules are sensitive to the order they execute. If they run in a different order, the program's behavior may differ.
+
+Let's look at a slightly more complicated example.
+
+<div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))'}}>
+
+```js
+// entry-a.js
+import './a1';
+import './a2';
+```
+
+```js
+// entry-b.js
+import './b1';
+import './b2';
+```
+
+```js
+// a1.js
+import './shared1';
+console.log('a1');
+````
+
+```js
+// a2.js
+import './shared2';
+console.log('a2');
+```
+
+```js
+// b1.js
+import './shared1';
+console.log('b1');
+````
+
+```js
+// b2.js
+import './shared2';
+console.log('b2');
+```
+
+```js
+// shared1.js
+console.log('shared1');
+```
+
+```js
+// shared2.js
+console.log('shared2');
+```
+
+</div>
+
+When running `entry-a.js` without bundling, this code produces the following logs:
+
+* shared1
+* a1
+* shared2
+* a2
+
+When bundling, the code splitting algorithm identifies that `shared1.js` and `shared2.js` are common dependencies between both `entry-a.js` and `entry-b.js`, so it splits them out into their own bundle. Then scope hoisting runs, inlining the a1, a2, b1, and b2 modules.
+
+<div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))'}}>
+
+
+```js
+// entry-a.bundle.js
+import 'shared.bundle.js';
+
+console.log('a1');
+console.log('a2');
+```
+
+```js
+// entry-b.bundle.js
+import 'shared.bundle.js';
+
+console.log('b1');
+console.log('b2');
+```
+
+</div>
+
+```js
+// shared.bundle.js
+console.log('shared1');
+console.log('shared2');
+```
+
+But now, when running `entry-a.bundle.js`, the logs are output in a different order!
+
+* shared1
+* shared2
+* a1
+* a2
+
+This example is broken in [Rollup](https://rollupjs.org/repl/?version=4.44.2&shareable=JTdCJTIyZXhhbXBsZSUyMiUzQW51bGwlMkMlMjJtb2R1bGVzJTIyJTNBJTVCJTdCJTIybmFtZSUyMiUzQSUyMm1haW4uanMlMjIlMkMlMjJjb2RlJTIyJTNBJTIyaW1wb3J0JTIwJTVDJTIyLiUyRmExJTVDJTIyJTNCJTVDbmltcG9ydCUyMCU1QyUyMi4lMkZhMiU1QyUyMiUyMiUyQyUyMmlzRW50cnklMjIlM0F0cnVlJTdEJTJDJTdCJTIybmFtZSUyMiUzQSUyMmIuanMlMjIlMkMlMjJjb2RlJTIyJTNBJTIyaW1wb3J0JTIwJTVDJTIyLiUyRmIxJTVDJTIyJTNCJTVDbmltcG9ydCUyMCU1QyUyMi4lMkZiMiU1QyUyMiUzQiUyMiUyQyUyMmlzRW50cnklMjIlM0F0cnVlJTdEJTJDJTdCJTIybmFtZSUyMiUzQSUyMnNoYXJlZDEuanMlMjIlMkMlMjJjb2RlJTIyJTNBJTIyY29uc29sZS5sb2coJTVDJTIyc2hhcmVkMSU1QyUyMiklM0IlMjIlN0QlMkMlN0IlMjJuYW1lJTIyJTNBJTIyc2hhcmVkMi5qcyUyMiUyQyUyMmNvZGUlMjIlM0ElMjJjb25zb2xlLmxvZyglNUMlMjJzaGFyZWQyJTVDJTIyKSUzQiUyMiU3RCUyQyU3QiUyMm5hbWUlMjIlM0ElMjJhMS5qcyUyMiUyQyUyMmNvZGUlMjIlM0ElMjJpbXBvcnQlMjAlNUMlMjIuJTJGc2hhcmVkMS5qcyU1QyUyMiUzQiU1Q25jb25zb2xlLmxvZyglNUMlMjJhMSU1QyUyMiklM0IlMjIlN0QlMkMlN0IlMjJuYW1lJTIyJTNBJTIyYTIuanMlMjIlMkMlMjJjb2RlJTIyJTNBJTIyaW1wb3J0JTIwJTVDJTIyLiUyRnNoYXJlZDIuanMlNUMlMjIlM0IlNUNuY29uc29sZS5sb2coJTVDJTIyYTIlNUMlMjIpJTNCJTIyJTdEJTJDJTdCJTIybmFtZSUyMiUzQSUyMmIxLmpzJTIyJTJDJTIyY29kZSUyMiUzQSUyMmltcG9ydCUyMCU1QyUyMi4lMkZzaGFyZWQxLmpzJTVDJTIyJTNCJTVDbmNvbnNvbGUubG9nKCU1QyUyMmIxJTVDJTIyKSUzQiUyMiU3RCUyQyU3QiUyMm5hbWUlMjIlM0ElMjJiMi5qcyUyMiUyQyUyMmNvZGUlMjIlM0ElMjJpbXBvcnQlMjAlNUMlMjIuJTJGc2hhcmVkMi5qcyU1QyUyMiUzQiU1Q25jb25zb2xlLmxvZyglNUMlMjJiMiU1QyUyMiklM0IlMjIlN0QlNUQlMkMlMjJvcHRpb25zJTIyJTNBJTdCJTdEJTdE), [ESBuild](https://esbuild.github.io/try/#YgAwLjI1LjUALS1idW5kbGUgLS1vdXRkaXI9ZGlzdCAtLXNwbGl0dGluZyAtLWZvcm1hdD1lc20AZQBhLmpzAGltcG9ydCAiLi9hMSI7CmltcG9ydCAiLi9hMiIAZQBiLmpzAGltcG9ydCAiLi9iMSI7CmltcG9ydCAiLi9iMiI7AABhMS5qcwBpbXBvcnQgIi4vc2hhcmVkMS5qcyI7CmNvbnNvbGUubG9nKCJhMSIpOwAAYTIuanMAaW1wb3J0ICIuL3NoYXJlZDIuanMiOwpjb25zb2xlLmxvZygiYTIiKTsAAGIxLmpzAGltcG9ydCAiLi9zaGFyZWQxLmpzIjsKY29uc29sZS5sb2coImIxIik7AABiMi5qcwBpbXBvcnQgIi4vc2hhcmVkMi5qcyI7CmNvbnNvbGUubG9nKCJiMiIpOwAAc2hhcmVkMS5qcwBjb25zb2xlLmxvZygic2hhcmVkMSIpOwAAc2hhcmVkMi5qcwBjb25zb2xlLmxvZygic2hhcmVkMiIpOw), and [Rolldown](https://repl.rolldown.rs/#eNqdkU1ugzAQha8ymg2tRE2CuiLqGSp1W3dhB5NSOTYCpz9C3L22wQ6EZJMV47HfN28ePVZY9MjIV+e+CouxTnFvy/rY6NYARZKxrW1T3FE1b+ahaQUCi4rJTgwptlrKUv8osteqqg/ERPiVm8Uo89cI6OFtevbamFqrDgaoWn2EJMgTqiygMzBiipXgBXqqAGrVnEwB70nmtkpSSDLuig+qBqqoEr9+aikqdpKBhnYD9yp49vUqEH4tED4FsozDZxfj9YcVrvtkrSgj022npSBSHx6o1VB83DlfPvGI8ocbqPhrLlB5QPkF4o53uOLRlV87ou5wxaOr88TAm3VG6FI6XS/1cz+zzm39NN8Cvu2LLdmQzRMXhpH8GYd/CQ/9Sw==).
+
+## Solution
+
+The solution to this problem is wrapping each shared module in a function as discussed at the start of this post. That way, the execution order of the modules can be controlled.
+
+```js
+// entry-a.bundle.js
+import modules from 'shared.bundle.js';
+
+modules['shared1']();
+console.log('a1');
+modules['shared2']();
+console.log('a2');
+```
+
+```js
+// entry-b.bundle.js
+import modules from 'shared.bundle.js';
+
+modules['shared1']();
+console.log('b1');
+modules['shared2']();
+console.log('b2');
+```
+
+```js
+// shared.bundle.js
+export default {
+  'shared1': () => console.log('shared1'),
+  'shared2': () => console.log('shared2'),
+}
+```
+
+This is basically what [Parcel does](https://repl.parceljs.org/#JTdCJTIyZmlsZXMlMjIlM0ElNUIlNUIlMjIlMkZzcmMlMkZhLmpzJTIyJTJDJTdCJTIydmFsdWUlMjIlM0ElMjJpbXBvcnQlMjAlNUMlMjIuJTJGYTElNUMlMjIlM0IlNUNuaW1wb3J0JTIwJTVDJTIyLiUyRmEyJTVDJTIyJTIyJTJDJTIyaXNFbnRyeSUyMiUzQWZhbHNlJTdEJTVEJTJDJTVCJTIyJTJGc3JjJTJGYi5qcyUyMiUyQyU3QiUyMnZhbHVlJTIyJTNBJTIyaW1wb3J0JTIwJTVDJTIyLiUyRmIxJTVDJTIyJTNCJTVDbmltcG9ydCUyMCU1QyUyMi4lMkZiMiU1QyUyMiUzQiUyMiUyQyUyMmlzRW50cnklMjIlM0FmYWxzZSU3RCU1RCUyQyU1QiUyMiUyRnNyYyUyRmExLmpzJTIyJTJDJTdCJTIydmFsdWUlMjIlM0ElMjJpbXBvcnQlMjAlNUMlMjIuJTJGc2hhcmVkMS5qcyU1QyUyMiUzQiU1Q25jb25zb2xlLmxvZyglNUMlMjJhMSU1QyUyMiklM0IlMjIlN0QlNUQlMkMlNUIlMjIlMkZzcmMlMkZhMi5qcyUyMiUyQyU3QiUyMnZhbHVlJTIyJTNBJTIyaW1wb3J0JTIwJTVDJTIyLiUyRnNoYXJlZDIuanMlNUMlMjIlM0IlNUNuY29uc29sZS5sb2coJTVDJTIyYTIlNUMlMjIpJTNCJTIyJTdEJTVEJTJDJTVCJTIyJTJGc3JjJTJGYjEuanMlMjIlMkMlN0IlMjJ2YWx1ZSUyMiUzQSUyMmltcG9ydCUyMCU1QyUyMi4lMkZzaGFyZWQxLmpzJTVDJTIyJTNCJTVDbmNvbnNvbGUubG9nKCU1QyUyMmIxJTVDJTIyKSUzQiUyMiU3RCU1RCUyQyU1QiUyMiUyRnNyYyUyRmIyLmpzJTIyJTJDJTdCJTIydmFsdWUlMjIlM0ElMjJpbXBvcnQlMjAlNUMlMjIuJTJGc2hhcmVkMi5qcyU1QyUyMiUzQiU1Q25jb25zb2xlLmxvZyglNUMlMjJiMiU1QyUyMiklM0IlMjIlN0QlNUQlMkMlNUIlMjIlMkZzcmMlMkZzaGFyZWQxLmpzJTIyJTJDJTdCJTIydmFsdWUlMjIlM0ElMjJjb25zb2xlLmxvZyglNUMlMjJzaGFyZWQxJTVDJTIyKSUzQiUyMiU3RCU1RCUyQyU1QiUyMiUyRnNyYyUyRnNoYXJlZDIuanMlMjIlMkMlN0IlMjJ2YWx1ZSUyMiUzQSUyMmNvbnNvbGUubG9nKCU1QyUyMnNoYXJlZDIlNUMlMjIpJTNCJTIyJTdEJTVEJTJDJTVCJTIyJTJGc3JjJTJGYS5odG1sJTIyJTJDJTdCJTIydmFsdWUlMjIlM0ElMjIlM0NzY3JpcHQlMjB0eXBlJTNEJTVDJTIybW9kdWxlJTVDJTIyJTIwc3JjJTNEJTVDJTIyYS5qcyU1QyUyMiUzRSUzQyUyRnNjcmlwdCUzRSUyMiUyQyUyMmlzRW50cnklMjIlM0F0cnVlJTdEJTVEJTJDJTVCJTIyJTJGc3JjJTJGYi5odG1sJTIyJTJDJTdCJTIydmFsdWUlMjIlM0ElMjIlM0NzY3JpcHQlMjB0eXBlJTNEJTVDJTIybW9kdWxlJTVDJTIyJTIwc3JjJTNEJTVDJTIyYi5qcyU1QyUyMiUzRSUzQyUyRnNjcmlwdCUzRSUyMiUyQyUyMmlzRW50cnklMjIlM0F0cnVlJTdEJTVEJTJDJTVCJTIyJTJGcGFja2FnZS5qc29uJTIyJTJDJTdCJTIydmFsdWUlMjIlM0ElMjIlN0IlNUNuJTIwJTIwJTVDJTIyJTQwcGFyY2VsJTJGYnVuZGxlci1kZWZhdWx0JTVDJTIyJTNBJTIwJTdCJTVDbiUyMCUyMCUyMCUyMCU1QyUyMm1pbkJ1bmRsZVNpemUlNUMlMjIlM0ElMjAwJTVDbiUyMCUyMCU3RCU1Q24lN0QlMjIlN0QlNUQlNUQlMkMlMjJvcHRpb25zJTIyJTNBJTdCJTIyZW50cmllcyUyMiUzQSU1QiU1RCUyQyUyMm1pbmlmeSUyMiUzQWZhbHNlJTJDJTIyc2NvcGVIb2lzdCUyMiUzQXRydWUlMkMlMjJzb3VyY2VNYXBzJTIyJTNBZmFsc2UlMkMlMjJwdWJsaWNVcmwlMjIlM0ElMjIlMkZfX3JlcGxfZGlzdCUyMiUyQyUyMnRhcmdldFR5cGUlMjIlM0ElMjJicm93c2VycyUyMiUyQyUyMnRhcmdldEVudiUyMiUzQW51bGwlMkMlMjJvdXRwdXRGb3JtYXQlMjIlM0FudWxsJTJDJTIyaG1yJTIyJTNBZmFsc2UlMkMlMjJtb2RlJTIyJTNBJTIycHJvZHVjdGlvbiUyMiUyQyUyMnJlbmRlckdyYXBocyUyMiUzQWZhbHNlJTJDJTIydmlld1NvdXJjZW1hcHMlMjIlM0FmYWxzZSUyQyUyMmRlcGVuZGVuY2llcyUyMiUzQSU1QiU1RCUyQyUyMm51bVdvcmtlcnMlMjIlM0EwJTdEJTJDJTIydXNlVGFicyUyMiUzQWZhbHNlJTJDJTIyYnJvd3NlckNvbGxhcHNlZCUyMiUzQSU1QiU1RCUyQyUyMnZpZXdzJTIyJTNBJTVCJTIyJTJGc3JjJTJGYS5qcyUyMiUyQyUyMiUyRnNyYyUyRmIuanMlMjIlMkMlMjIlMkZzcmMlMkZhMS5qcyUyMiUyQyUyMiUyRnNyYyUyRmEyLmpzJTIyJTJDJTIyJTJGc3JjJTJGYjEuanMlMjIlMkMlMjIlMkZzcmMlMkZiMi5qcyUyMiUyQyUyMiUyRnNyYyUyRnNoYXJlZDEuanMlMjIlMkMlMjIlMkZzcmMlMkZzaGFyZWQyLmpzJTIyJTJDJTIyJTJGcGFja2FnZS5qc29uJTIyJTJDJTIyJTJGc3JjJTJGYS5odG1sJTIyJTJDJTIyJTJGc3JjJTJGYi5odG1sJTIyJTVEJTJDJTIyY3VycmVudFZpZXclMjIlM0E5JTdE). Each module that is accessed outside of the bundle that it is declared in is wrapped in a function, which is called by the module that uses it when needed. If a module is wrapped, that also means all of its dependencies must also be wrapped. In practice in real world applications, that means most modules end up being wrapped in a function, pretty much negating most of the benefit of scope hoisting.
+
+Webpack implements something similar. They also support [module concatenation](https://webpack.js.org/plugins/module-concatenation-plugin/), which performs partial scope hoisting for a group of modules that are only accessed within the same bundle (among other conditions). This is likely the most optimal solution while also being correct. Parcel may implement something like this in the future.
+
+## Other problems
+
+Side effects are just one of the problems with scope hoisting but there are others. One of them is that it breaks the `this` value within exported functions.
+
+```js
+// entry.js
+import * as foo from './foo';
+
+foo.bar();
+```
+
+```js
+// foo.js
+export function bar() {
+  console.log(this);
+}
+```
+
+Without bundling, the above example logs the `foo.js` module (i.e. an object containing the `bar` function).
+
+After bundling with scope hoisting, the bundle might look like this:
+
+```js
+// bundle.js
+function bar() {
+  console.log(this);
+}
+
+bar();
+```
+
+But now the `bar()` function is being called directly, with no object property access. Therefore, the `this` value is `undefined` (in strict mode). This is broken in [Rollup](https://rollupjs.org/repl/?version=4.44.1&shareable=JTdCJTIyZXhhbXBsZSUyMiUzQW51bGwlMkMlMjJtb2R1bGVzJTIyJTNBJTVCJTdCJTIyY29kZSUyMiUzQSUyMmltcG9ydCUyMColMjBhcyUyMGZvbyUyMGZyb20lMjAnLiUyRnF1eCclNUNuJTVDbmZvby50ZXN0KCklMjIlMkMlMjJpc0VudHJ5JTIyJTNBdHJ1ZSUyQyUyMm5hbWUlMjIlM0ElMjJtYWluLmpzJTIyJTdEJTJDJTdCJTIyY29kZSUyMiUzQSUyMmV4cG9ydCUyMGZ1bmN0aW9uJTIwdGVzdCgpJTIwJTdCJTVDbiUyMCUyMGNvbnNvbGUubG9nKHRoaXMpJTVDbiU3RCUyMiUyQyUyMmlzRW50cnklMjIlM0FmYWxzZSUyQyUyMm5hbWUlMjIlM0ElMjJxdXguanMlMjIlN0QlNUQlMkMlMjJvcHRpb25zJTIyJTNBJTdCJTIyb3V0cHV0JTIyJTNBJTdCJTIyZm9ybWF0JTIyJTNBJTIyZXMlMjIlN0QlN0QlN0Q=), [ESBuild](https://esbuild.github.io/try/#YgAwLjI1LjUALS1idW5kbGUAZQBlbnRyeS5qcwBpbXBvcnQgKiBhcyBmb28gZnJvbSAnLi9xdXgnCgpmb28udGVzdCgpAABxdXguanMAZXhwb3J0IGZ1bmN0aW9uIHRlc3QoKSB7CiAgY29uc29sZS5sb2codGhpcykKfQ), [Parcel](https://repl.parceljs.org/#JTdCJTIyZmlsZXMlMjIlM0ElNUIlNUIlMjIlMkZzcmMlMkZpbmRleC5qcyUyMiUyQyU3QiUyMnZhbHVlJTIyJTNBJTIyY29uc3QlMjBmb28lMjAlM0QlMjByZXF1aXJlKCcuJTJGb3RoZXInKSUzQiU1Q24lNUNuZm9vLnRlc3QoKSUyMiUyQyUyMmlzRW50cnklMjIlM0F0cnVlJTdEJTVEJTJDJTVCJTIyJTJGc3JjJTJGb3RoZXIuanMlMjIlMkMlN0IlMjJ2YWx1ZSUyMiUzQSUyMmV4cG9ydCUyMGZ1bmN0aW9uJTIwdGVzdCgpJTIwJTdCJTVDbiUyMCUyMGNvbnNvbGUubG9nKHRoaXMpJTVDbiU3RCUyMiU3RCU1RCUyQyU1QiUyMiUyRnBhY2thZ2UuanNvbiUyMiUyQyU3QiUyMnZhbHVlJTIyJTNBJTIyJTdCJTVDbiUyMCUyMCU1QyUyMnNpZGVFZmZlY3RzJTVDJTIyJTNBJTIwJTVCJTVDJTIyc3JjJTJGaW5kZXguanMlNUMlMjIlNUQlNUNuJTdEJTIyJTdEJTVEJTVEJTJDJTIyb3B0aW9ucyUyMiUzQSU3QiUyMmVudHJpZXMlMjIlM0ElNUIlNUQlMkMlMjJtaW5pZnklMjIlM0FmYWxzZSUyQyUyMnNjb3BlSG9pc3QlMjIlM0F0cnVlJTJDJTIyc291cmNlTWFwcyUyMiUzQWZhbHNlJTJDJTIycHVibGljVXJsJTIyJTNBJTIyJTJGX19yZXBsX2Rpc3QlMjIlMkMlMjJ0YXJnZXRUeXBlJTIyJTNBJTIyYnJvd3NlcnMlMjIlMkMlMjJ0YXJnZXRFbnYlMjIlM0FudWxsJTJDJTIyb3V0cHV0Rm9ybWF0JTIyJTNBbnVsbCUyQyUyMmhtciUyMiUzQWZhbHNlJTJDJTIybW9kZSUyMiUzQSUyMnByb2R1Y3Rpb24lMjIlMkMlMjJyZW5kZXJHcmFwaHMlMjIlM0FmYWxzZSUyQyUyMnZpZXdTb3VyY2VtYXBzJTIyJTNBZmFsc2UlMkMlMjJkZXBlbmRlbmNpZXMlMjIlM0ElNUIlNUQlMkMlMjJudW1Xb3JrZXJzJTIyJTNBMCU3RCUyQyUyMnVzZVRhYnMlMjIlM0FmYWxzZSUyQyUyMmJyb3dzZXJDb2xsYXBzZWQlMjIlM0ElNUIlNUQlMkMlMjJ2aWV3cyUyMiUzQSU1QiUyMiUyRnNyYyUyRmluZGV4LmpzJTIyJTJDJTIyJTJGc3JjJTJGb3RoZXIuanMlMjIlMkMlMjIlMkZwYWNrYWdlLmpzb24lMjIlNUQlMkMlMjJjdXJyZW50VmlldyUyMiUzQTIlN0Q=), [Rolldown](https://repl.rolldown.rs/#eNptj8EOgjAQRH9lsxfAkHon8RtMPHMh0CKmdJEuiiH9d1spUaOXptPuvJldUGGxYGcaOQu24W6weOsc6yD7gUaGHVQWFBGokXpIxP46zeJik9KUxj8LlpbTzHskFjxO0uU4ktYN3Y2oyaiu/Yj48/MVxo9BwgKnOHYcuCNjwcXwze7DPcAyrJjix3CAJfRz4ZDzC91IVU16s6CvuS6yVYtqrRM9ajJ1AMK6ZIBCAFjSUmhqUz53NvM56Dzv5o26CqPonlcjexw=), and [webpack](https://stackblitz.com/edit/github-p7kfub3q?file=src%2Findex.js).
+
+This gets even more complicated when re-exports are involved, because the `this` value should be the re-exporting module, not the module where the function is declared.
+
+## Is scope hoisting worth it?
+
+That's what I've been wondering lately. It seems like an awful lot of complexity for pretty limited optimization potential.
+
+When Rollup was created, it did not support code splitting at all. In that case, scope hoisting can (mostly) work well. But this is a very limited use case – basically bundling libraries or very small applications. Bundling libraries is also not really a good idea either, but that's a topic for another post.
+
+Once code splitting is introduced, scope hoisting has very limited benefit. In my tests with Parcel on real-world apps, less than 5% of the modules didn't end up wrapped in a function. Basically only the modules within entry bundles can be wrapped – anything in shared bundles, or accessed via dynamic import must be wrapped. Module concatenation as webpack implements may help with this, but even then there are a lot of cases where the optimization [bails out](https://webpack.js.org/plugins/module-concatenation-plugin/#optimization-bailouts).
+
+Scope hoisting was also supposed to help with tree shaking. By making references between modules static variable accesses rather than going through a function, minifiers could work better because they could "see" across modules and remove code that wasn't used. But that's only a benefit if you're relying on a general purpose minifier to implement tree shaking. Bundlers can also collect this information themselves and perform tree shaking even when modules are wrapped, and even when referenced between different bundles.
+
+One other potential benefit of scope hoisting is runtime performance. In 2016, Nolan Lawson wrote [a post](https://nolanlawson.com/2016/08/15/the-cost-of-small-modules/) about the cost of small modules. He attempted to measure both the bundle size and runtime cost of function wrappers around modules. At the time, however, only Rollup implemented tree shaking, so the bundle size cost was larger than in reality. The runtime cost (basically the cost of object property access vs static variable reference) is interesting. I would be curious to test this again using modern hardware and JS engines and see if it's still a factor today. On the other hand, lazily evaluating modules only when they are needed rather than all up front can have a performance benefit too.
+
+So in summary: I'm not sure scope hoisting is worth it anymore, and I'm considering removing it in Parcel v3. Of course, we'll still have tree shaking, dead code elimination, constant folding, and other optimizations, but I'm considering a design where modules are wrapped in functions by default to improve correctness and reduce complexity. I'll report back how it goes.

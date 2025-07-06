@@ -1,8 +1,33 @@
-nav a {
-  color: ButtonText;
+nav {
+  margin-top: 48px;
 }
 
-nav a[aria-current] {
-  background: ButtonText;
-  color: Canvas;
+nav h2 {
+  margin: 0;
+}
+
+nav time {
+  font-size: small;
+  color: darkslategray;
+}
+
+nav ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+nav li {
+  margin: 20px 0;
+}
+
+nav a {
+  color: ButtonText;
+  text-decoration: none;
+  font-size: x-large;
+  font-weight: bold;
+}
+
+nav p {
+  line-height: 1.5;
 }

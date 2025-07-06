@@ -4,14 +4,14 @@ import './Nav.css';
 export function Nav({pages, currentPage}: PageProps) {
   return (
     <nav>
-      <h3>Navigation</h3>
-      <p><code>components/Nav.tsx</code> shows how to render a list of pages.</p>
       <ul>
-        {pages.map(page => (
+        {pages.filter(p => p.url.startsWith('/blog')).map(page => (
           <li key={page.url}>
-            <a href={page.url} aria-current={page.url === currentPage.url ? 'page' : undefined}>
-              {page.name}
-            </a>
+            <h2><a href={page.url} aria-current={page.url === currentPage.url ? 'page' : undefined}>
+              {page.exports?.title ?? page.tableOfContents?.[0].title ?? page.name}
+            </a></h2>
+            <time dateTime={page.exports?.date}>{new Date(page.exports?.date + 'T00:00').toLocaleDateString()}</time>
+            <p>{page.exports?.description}</p>
           </li>
         ))}
       </ul>
