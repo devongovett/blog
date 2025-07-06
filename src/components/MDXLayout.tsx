@@ -40,7 +40,8 @@ export default function Layout({children, pages, currentPage}: LayoutProps) {
                   </>
                 ),
                 CodeBlock: (props: any) => (
-                  <pre {...props}>
+                  <pre>
+                    {/* @ts-ignore */}
                     <code dangerouslySetInnerHTML={{__html: treeSitter.highlight(props.children, treeSitter.Language[props.lang?.toUpperCase() || 'JS'])}} />
                   </pre>
                 )
