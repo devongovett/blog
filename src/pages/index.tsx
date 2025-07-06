@@ -1,7 +1,7 @@
 import type { PageProps } from '@parcel/rsc';
 import { Nav } from '../components/Nav';
 import '../page.css';
-import '../client';
+// import '../client';
 // @ts-ignore
 import avatar from 'url:../avatar.jpg';
 

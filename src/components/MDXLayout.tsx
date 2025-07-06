@@ -1,7 +1,7 @@
 import type { PageProps } from '@parcel/rsc';
 import { cloneElement, type ReactNode } from 'react';
 import '../page.css';
-import '../client';
+// import '../client';
 // @ts-ignore
 import avatar from 'url:../avatar.jpg';
 import treeSitter from 'tree-sitter-highlight';
