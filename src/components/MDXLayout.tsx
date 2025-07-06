@@ -18,8 +18,11 @@ export default function Layout({children, pages, currentPage}: LayoutProps) {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>{currentPage.tableOfContents?.[0].title}</title>
         <meta name="description" content={currentPage?.exports?.description} />
-        <meta name="og:title" content={currentPage.tableOfContents?.[0].title} />
-        <meta name="og:description" content={currentPage?.exports?.description} />
+        <meta property="og:title" content={currentPage.tableOfContents?.[0].title} />
+        <meta property="og:description" content={currentPage?.exports?.description} />
+        <meta property="og:url" content={`https://devongovett.me${currentPage.url}`} />
+        <meta name="twitter:card" content="summary" />
+        <meta name="twitter:site" content="@devongovett" />
       </head>
       <body>
         <header>
