@@ -8,7 +8,7 @@ nav h2 {
 
 nav time {
   font-size: small;
-  color: darkslategray;
+  color: light-dark(darkslategray, lightslategray);
 }
 
 nav ul {
@@ -22,7 +22,7 @@ nav li {
 }
 
 nav a {
-  color: ButtonText;
+  color: inherit;
   text-decoration: none;
   font-size: x-large;
   font-weight: bold;

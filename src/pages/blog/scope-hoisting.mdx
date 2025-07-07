@@ -128,7 +128,7 @@ But JavaScript modules can have more than just exports. They can have arbitrary 
 
 Let's look at a slightly more complicated example.
 
-<div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))'}}>
+<div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))'}}>
 
 ```js
 // entry-a.js
@@ -187,7 +187,7 @@ When running `entry-a.js` without bundling, this code produces the following log
 
 When bundling, the code splitting algorithm identifies that `shared1.js` and `shared2.js` are common dependencies between both `entry-a.js` and `entry-b.js`, so it splits them out into their own bundle. Then scope hoisting runs, inlining the a1, a2, b1, and b2 modules.
 
-<div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))'}}>
+<div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))'}}>
 
 
 ```js

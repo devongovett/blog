@@ -1,15 +1,15 @@
 html {
   color-scheme: light dark;
+  background: light-dark(white, #121212);
   font-family: system-ui;
-  display: flex;
-  justify-content: center;
-  height: 100%;
+  margin: 8px;
 }
 
 
 body {
-  width: 700px;
+  max-width: 700px;
   padding: 32px 24px;
+  margin: 0 auto;
 }
 
 header {
@@ -24,14 +24,14 @@ header {
   }
 
   a {
-    color: darkslategray;
+    color: light-dark(darkslategray, #89a);
     text-decoration: none;
     font-size: large;
     font-weight: bold;
   }
 
   h1 {
-    color: darkslategray;
+    color: light-dark(darkslategray, #89a);
     font-size: large;
     margin: 0;
   }
@@ -48,29 +48,40 @@ article {
 
   time {
     font-size: small;
-    color: darkslategray;
+    color: light-dark(darkslategray, lightslategray);
     display: block;
     margin-bottom: 2rem;
   }
 
-  p {
+  p, li {
     line-height: 1.5;
+    @media (resolution >=  200dpi) {
+      font-size: 1.125rem;
+    }
+
+    code {
+      font-size: 0.9em;
+    }
   }
 }
 
 pre {
+  background: light-dark(#f6f6f6, #1a1a1a);
+  border-radius: 10px;
+  line-height: 1.5;
+  overflow: auto;
   padding: 24px;
   margin: 12px -24px;
-  background: #f6f6f6;
-  border-radius: 10px;
-  line-height: 1.2;
+  font-size: 0.85rem;
 
   .comment {
-    color: #5e656e;
+    color: light-dark(#5e656e, #9198a1);
   }
+
   .punctuation {
-    color: #24292f;
+    color: light-dark(#24292f, #f0f6fc);
   }
+
   .property,
   .tag,
   .boolean,
@@ -82,7 +93,7 @@ pre {
   .string.special,
   .text.literal,
   .title {
-    color: #0550ae;
+    color: light-dark(#0550ae, #79c0ff);
   }
 
   .title {
@@ -92,23 +103,23 @@ pre {
   .string,
   .string.regex,
   .link_text {
-    color: #0a3069;
+    color: light-dark(#0a3069, #a5d6ff);
   }
 
   .function {
-    color: #8250df;
+    color: light-dark(#8250df, #d2a8ff);
   }
 
   .variable,
   .operator,
   .primary {
-    color: #0a3069;
+    color: light-dark(#0a3069, #a5d6ff);
   }
 
   .keyword,
   .embedded,
   .preproc {
-    color: #cf222e;
+    color: light-dark(#cf222e, #ff7b72);
   }
 
   .emphasis,
