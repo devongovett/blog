@@ -5,7 +5,7 @@ export function Nav({pages, currentPage}: PageProps) {
   return (
     <nav>
       <ul>
-        {pages.filter(p => p.url.startsWith('/blog')).map(page => (
+        {pages.filter(p => p.url.startsWith('/blog')).sort((a, b) => b.exports!.date.localeCompare(a.exports!.date)).map(page => (
           <li key={page.url}>
             <h2><a href={page.url} aria-current={page.url === currentPage.url ? 'page' : undefined}>
               {page.exports?.title ?? page.tableOfContents?.[0].title ?? page.name}

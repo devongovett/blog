@@ -54,10 +54,28 @@ article {
   }
 
   p, li {
-    line-height: 1.5;
+    line-height: 1.75;
     @media (resolution >=  200dpi) {
       font-size: 1.125rem;
     }
+
+    code {
+      background: light-dark(#f6f6f6, #222);
+      border: 1px solid light-dark(#ddd, #333);
+      border-radius: 6px;
+      padding: 2px;
+      &:first-child {
+        margin-left: -2px;
+      }
+    }
+  }
+
+  p {
+    margin: 1.5em 0;
+  }
+
+  li {
+    margin: 0.2lh 0;
   }
 }
 
@@ -124,5 +142,44 @@ pre {
   }
   .emphasis.strong {
     font-weight: 700;
+  }
+}
+
+.dot {
+  background: light-dark(#f6f6f6, #1a1a1a);
+  border-radius: 10px;
+  padding: 24px;
+  margin: 12px -24px;
+
+  svg {
+    display: block;
+    margin: 0 auto;
+    max-width: 100%;
+
+    text {
+      font-family: system-ui;
+      font-size: 12px;
+      fill: light-dark(black, white);
+    }
+
+    [fill=black] {
+      fill: light-dark(black, white);
+    }
+
+    [stroke=black] {
+      stroke: light-dark(black, white);
+    }
+
+    .node {
+      ellipse, path {
+        fill: light-dark(white, #333);
+        stroke: light-dark(black, #aaa);
+      }
+    }
+
+    .cluster path {
+      fill: light-dark(white, #121212);
+      stroke: light-dark(black, #aaa);
+    }
   }
 }

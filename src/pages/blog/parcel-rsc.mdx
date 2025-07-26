@@ -1,0 +1,437 @@
+import Layout from '../../components/MDXLayout';
+export default Layout;
+
+export const description = 'Parcel v2.14.0 added support for React Server Components. This post is a deep dive into the internals: how RSCs integrate with a bundler, what directives like "use client" actually do, how code splitting works and how RSCs improve it, etc.';
+export const date = '2025-07-26';
+
+# How Parcel bundles React Server Components
+
+Parcel v2.14.0 added support for [React Server Components](https://parceljs.org/recipes/rsc/). The [release blog post](https://parceljs.org/blog/v2-14-0/) and [documentation](https://parceljs.org/recipes/rsc/) describe what RSCs are and how to use them with Parcel. This post is a deep dive into the internals: how RSCs integrate with a bundler, what directives like `"use client"` do internally, how code splitting works and how RSCs improve it, etc. Let's jump in!
+
+## What does a bundler do?
+
+Before we get to RSCs, let's back up and discuss what bundlers do in general. We'll start at the most basic level, and gradually add features until we build up to RSCs.
+
+**A bundler combines many JavaScript files (*modules*) together into fewer files (*bundles*).**
+
+Why do we do this? Because it's faster to load a single HTTP request in the browser than it is to load many HTTP requests. Even with HTTP/2, there is a [practical limit](https://web.dev/articles/granular-chunking-nextjs) of around 25 parallel requests before load time starts increasing. In addition to network overhead, gzip/brotli compression is more effective on larger files than smaller ones.
+
+Some tools have moved toward *unbundled* development servers while continuing to bundle in production. This can sometimes benefit build performance, however, at a certain scale, page loads [become slow](https://github.com/vitejs/vite/discussions/13697) even locally as the browser deals with thousands of network requests.
+
+The simplest bundler just concatenates files together. But these days we have *modules*, which isolate the variable scopes between files, and allow importing and exporting values. The bundler's job is to preserve the behavior of modules, as if they were running natively in the browser, while optimizing page load performance.
+
+## Code splitting
+
+But combining all of the files in your entire app into a single bundle would create bundles that are too big, resulting in a lot of code being downloaded that isn't used right away, and preventing the browser from caching parts of the app that don't change frequently.
+
+**Code splitting strikes a balance between initial load performance and HTTP caching.** The goal is to keep the number of parallel requests to a minimum (around 25), while utilizing the browser cache to avoid re-downloading code when navigating between pages.
+
+For example, let's say you have an app with three pages: Dashboard, Profile, and Settings. All three depend on `react` and a common `Button` component. Settings also depends on a `Checkbox` component, and Dashboard depends on `Chart`.
+
+```dot
+Settings -> Button
+Settings -> react
+Settings -> Checkbox
+Profile -> react
+Profile -> Button
+Dashboard -> react
+Dashboard -> Button
+Dashboard -> Chart
+```
+
+A simple bundler without code splitting would put all of this into a single bundle, but this is inefficient because you have to download code that isn't used on some pages. For example, when navigating to the profile page you're downloading Checkbox and Chart which are not used.
+
+A slightly more advanced approach would be to run the bundler multiple times, starting from each page as an entry point. That would yield three bundles:
+
+```dot
+node [shape=box, style=rounded]
+dash [label=<Dashboard<BR />
+<B>react</B><BR />
+<B>Button</B><BR />
+Chart>]
+profile [label=<Profile<BR />
+<B>react</B><BR />
+<B>Button</B>>]
+settings [label=<Settings<BR />
+<B>react</B><BR />
+<B>Button</B><BR />
+Checkbox>]
+```
+
+This avoids any unnecessary code being downloaded up front, but still has a problem: if a user first loads the dashboard, and then clicks a link to load the profile or settings page, they will be re-downloading code they already have cached locally, namely Button and react.
+
+Most modern bundlers, including Parcel, automatically split common dependencies out into their own bundles, which can be shared between entry points (e.g. pages).
+
+```dot
+node [shape=box, style=rounded]
+dash [label="Dashboard
+Chart"]
+Profile
+settings [label="Settings
+Checkbox"]
+shared [label="react
+Button"]
+
+dash -> shared
+Profile -> shared
+settings -> shared
+```
+
+In this example, React and Button are moved into a shared bundle. Chart and Checkbox are only used in a single page, so they are not split out. This enables the browser to cache Button and React separately from the pages that use them.
+
+On initial load, the browser downloads only the code that is used for that page, over two HTTP requests instead of one. When you click a link to navigate to another page, you only need to download the new code. The shared bundle containing React and Button is already cached.
+
+In large real-world apps, there are often many combinations of dependencies that are shared between pages. When more than 25 parallel requests would be needed to load these, Parcel inlines the smallest shared bundles to keep the number of requests to a minimum. This results in some code duplication between pages, but optimizes for initial loading performance. These parameters can be tweaked, but the defaults result in a good balance between caching and page load performance for most apps.
+
+## Dynamic loading
+
+What I've described so far is known as "route-based code splitting". Each route/page in your app is an entry point in your bundler configuration, and the bundler extracts common dependencies between pages.
+
+However, many React apps are implemented as a [single-page app](https://en.wikipedia.org/wiki/Single-page_application) (SPA). In this model, there is actually only a single entry point, with routing occurring on the client. Bundlers made this work by supporting [dynamic import()](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/import) syntax, which loads a module on demand.
+
+A client-side router might boil down to something like this:
+
+```js
+if (location.pathname === '/dashboard') {
+  await import('./Dashboard');
+} else if (location.pathname === '/profile') {
+  await import('./Profile');
+} else if (location.pathname === '/settings') {
+  await import('./Settings');
+}
+```
+
+The bundler treats each `import()` as an entry point, and extracts common dependencies between them as described above. However, this introduces a problem: the browser doesn't know which bundles it needs to load until the page downloads and the app initializes. This creates a **network waterfall**.
+
+```dot
+rankdir=LR
+node [shape=box, style=rounded]
+Entry -> Dashboard [label=conditional]
+Entry -> Profile [label=conditional]
+Entry -> Settings [label=conditional]
+Dashboard -> "common dependencies"
+Profile -> "common dependencies"
+Settings -> "common dependencies"
+```
+
+The browser first downloads the Entry JavaScript bundle, which checks the URL to see which route it needs to load, and triggers a dynamic `import()` to load additional code (Dashboard, Profile, or Settings).
+
+This problem is exacerbated when introducing nested routing. Imagine that the settings page had multiple sub-pages: `/settings/account`, `/settings/notifications`, and `/settings/appearance`. These pages might grow to a large enough size that they are also split out into their own dynamically loaded components. They might be maintained by different teams, and maybe even live in different repos.
+
+```dot
+rankdir=LR
+node [shape=box, style=rounded]
+Entry -> Settings [label=conditional]
+Settings -> Account [label=conditional]
+Settings -> Notifications [label=conditional]
+Settings -> Appearance [label=conditional]
+```
+
+Now the browser downloads the Entry, which downloads the Settings component, which downloads the Account or Notifications or Appearance component.
+
+And that doesn't even account for the *data* needed by each of these routes. Once each dynamically loaded component downloads, it might need to make a request to the API before it can display anything.
+
+```dot
+rankdir=LR
+node [shape=box, style=rounded]
+Entry -> Settings [label=conditional]
+Settings -> Account [label=conditional]
+Settings -> Notifications [label=conditional]
+Settings -> Appearance [label=conditional]
+Account -> "/api/account"
+Notifications -> "/api/notifications"
+Appearance -> "/api/appearance"
+```
+
+Every nested route makes the app slower, and the user might see several different loading spinners for each part of the page. This is not a good UX.
+
+One solution to this is to manually implement preloading code, so that the Entry looks at the URL ahead of time, realizes that the Notifications page is going to be needed later on, and starts loading the code and data it needs in advance. But this is hard to implement and maintain in a large codebase with many different people/teams contributing.
+
+## React Server Components
+
+React Server Components (RSCs) are the React team's answer to these problems (and others). Aside from enabling a new type of component that runs _only_ on the server and not in the browser, RSCs work hand in hand with a bundler to optimize an application's loading sequence.
+
+## Environments
+
+Each module in Parcel has an associated _environment_. This describes where the module runs – on the server, in a browser, in a web worker, etc., and various properties such as the target engines (e.g. browser/node versions). Environments are not a new feature for RSCs – Parcel has supported multiple environments since v2 was released (2021).
+
+**Unlike most other bundlers, Parcel has a single unified module graph spanning across environments** rather than splitting each environment into a separate build. This enables code splitting to span environments too.
+
+Here's the example I described earlier, now annotated with the environment of each module.
+
+```dot
+"Settings (server)" -> "Button (client)"
+"Settings (server)" -> "react (client)"
+"Settings (server)" -> "Checkbox (client)"
+"Profile (server)" -> "react (client)"
+"Profile (server)" -> "Button (client)"
+"Dashboard (server)" -> "react (client)"
+"Dashboard (server)" -> "Button (client)"
+"Dashboard (server)" -> "Chart (server)"
+```
+
+With RSCs, the pages are Server Components, and they may import other Server components, or Client components annotated with `"use client"`.
+
+Parcel bundles common dependencies that have the same environment together.
+
+```dot
+node [shape=box, style=rounded]
+subgraph {
+  cluster=true
+  style=rounded
+  label="Server"
+
+  dashboard [label="Dashboard
+Chart"]
+  Profile
+  Settings
+}
+
+subgraph {
+  cluster=true
+  style=rounded
+  label="    Client"
+
+  button [label="Button
+react"]
+  Checkbox
+}
+
+dashboard -> button
+Profile -> button
+Settings -> button
+Settings -> Checkbox
+```
+
+Here, Dashboard and Chart are both server components so they are bundled together. As before, Button and React are common client dependencies shared between pages. And Checkbox is a client component only used by Settings.
+
+## Directives
+
+Though environments have existed in Parcel for a while (for things like web workers), the `"use client"` and `"use server"` directive syntax is a new feature for server components.
+
+["use client"](https://react.dev/reference/rsc/use-client) does two things:
+
+1. Changes a module's environment to `react-client`.
+2. When imported from a `react-server` environment, creates React *Client References* for each exported component.
+
+The second step is the magic that makes RSCs work. Let's look at an example:
+
+```jsx
+// Server.js
+import {Button} from './Button';
+
+export function ServerComponent() {
+  return <Button>Click me</Button>
+}
+```
+
+```jsx
+// Button.js
+"use client";
+
+export function Button({children}) {
+  return <button onClick={() => alert('Hi!')}>{children}</button>;
+}
+```
+
+When `Server.js` (which is in the `react-server` environment) imports `Button.js` (which has `"use client"`), it resolves to a module that looks like this:
+
+```js
+import {createClientReference} from 'react-server-dom-parcel/server';
+
+export const Button = createClientReference('aX49a6', 'Button', ['client.bundle.js']);
+```
+
+Each export is replaced by a React *Client Reference*, which describes where to find the `Button` component. `createClientReference` receives three parameters:
+
+1. The Parcel-generated module id for `Button.js` in the `react-client` environment.
+2. The name of the export for the `Button` component.
+3. A list of bundle URLs that must be loaded in order to run the `Button.js` module.
+
+This module containing client references has the `react-server` environment, so it appears in the server bundle. It references the URLs and ids of the original code, which has the `react-client` environment and appears in the client bundle.
+
+`createClientReference` returns an object that React knows how to render. So when `Server.js` renders a `<Button>`, React serializes a placeholder representing this element.
+
+The JSX returned by the above `ServerComponent` looks like this:
+
+```jsx
+{
+  type: {
+    $$typeof: Symbol.for('react.client.reference'),
+    $$id: 'aX49a6',
+    $$name: 'Button',
+    $$bundles: ['client.bundle.js']
+  },
+  props: {
+    children: 'Click me'
+  }
+}
+```
+
+In the browser, React deserializes this JSX from JSON, and calls Parcel-specific bundler bindings to load this Client Reference. This loads the bundle URLs provided in `$$bundles`, requires the module by `$$id`, and gets the `$$name` export from that module.
+
+Here's some pseudo-code:
+
+```js
+let Button = Promise.all(reference.$$bundles.map(url => import(url)))
+  .then(() => {
+    let module = parcelRequire(reference.$$id);
+    return module[reference.$$name];
+  });
+```
+
+This resolves the Client Reference to the original `Button` function, which can be rendered by passing the `props` to it.
+
+Dan Abramov has a [few](https://overreacted.io/what-does-use-client-do/) [great](https://overreacted.io/jsx-over-the-wire/) [posts](https://overreacted.io/why-does-rsc-integrate-with-a-bundler/) that go into more detail on this serialization process if you're interested.
+
+## Bundling client components
+
+One interesting thing you might notice is that **`"use client"` is _not_ an explicit code splitting point** like dynamic `import()`. If you import more than one client component from a server component, the client components will be grouped together into a single bundle instead of split into separate bundles.
+
+```dot
+subgraph {
+  cluster=true
+  style=rounded
+  label="Client bundle"
+  labeljust=l
+  "Button (client)"
+  "Checkbox (client)"
+}
+
+"Dashboard (server)" -> "Button (client)"
+"Dashboard (server)" -> "Checkbox (client)"
+```
+
+This is because a single server component may render many client components. As discussed earlier, the goal of bundling is to reduce the number of HTTP requests needed to load the page. If each new client component you rendered resulted in a new HTTP request, that would quickly get out of hand.
+
+When there is more than one page, the client components used by each page are grouped together. **This is only possible in bundlers with a unified module graph that spans both the server and client environment**. If each file containing `"use client"` is simply treated as an entrypoint (as in some RSC implementations), there is no way to bundle client components that are always used together into the same HTTP request.
+
+## Conditional rendering
+
+However, there are times where client components are rendered _conditionally_. For example, in a social feed there might be different types of posts, e.g. text, images, videos, etc., and you might only want to download the components that are actually needed for the response data.
+
+Or going back to our earlier example of a nested router, components might conditionally render their children based on the requested URL.
+
+Parcel supports code splitting RSCs just like client code, via dynamic `import()`:
+
+```js
+import { lazy } from 'react';
+
+const Dashboard = lazy(() => import('./Dashboard'));
+const Profile = lazy(() => import('./Profile'));
+const Settings = lazy(() => import('./Settings'));
+
+function Router({ url }) {
+  switch (url) {
+    case '/dashboard':
+      return <Dashboard />;
+    case '/profile':
+      return <Profile />;
+    case '/settings':
+      return <Settings />;
+  }
+}
+```
+
+**Unlike client-only apps, code splitting in RSC apps does not cause network waterfalls.** On the server (or during the build), React renders the `Router` component, which lazily loads the component for the requested route (e.g. `Settings`). React automatically preloads the bundles for all client components in the initial response (e.g. HTML).
+
+This works using the `$$bundles` array provided by Parcel for each Client Reference that I showed earlier. When rendering client components during SSR, React injects preload tags into the HTML for each bundle URL used by all of the Client References on the page.
+
+```jsx
+<html>
+  <head>
+    <link rel="modulepreload" href="Settings.bundle.js" />
+    <link rel="modulepreload" href="AccountSettings.bundle.js" />
+  </head>
+  <!-- ... -->
+</html>
+```
+
+Dynamic import works with any level of nesting, and in both server and client components. If `<Settings>` has its own dynamically imported components, these will also be preloaded. This effectively flattens the network waterfall so that everything starts loading immediately, without waiting for `import()` to be called in the browser.
+
+RSCs also help solve data loading waterfalls. Components request their data on the server (which is usually much closer to the API than the browser), and include this data in the initial response. This allows the client to immediately render in a [single network roundtrip](https://overreacted.io/one-roundtrip-per-navigation/), with all of the code and data that it needs already available.
+
+Here's the example I showed earlier using RSCs for a `/settings/account` page. The API responses are included in the initial HTML instead of being loaded separately by the client, and the settings and account JavaScript bundles are immediately preloaded in parallel instead of loaded in series.
+
+```dot
+rankdir=LR
+node [shape=box, style=rounded]
+HTML [label=<<b>HTML</b><br/>
+/api/settings<br/>
+/api/account>]
+
+HTML -> Settings
+HTML -> AccountSettings
+```
+
+What's cool about this is that the underlying component structure in the source code did not change from the SPA version. We still have separate components for each part of the page, and separate APIs for each part of the data. These can be maintained by different teams or even live in different repos. But now rather than slowing down the page by loading in series and adding lots of spinners to the UI, the loading is automatically parallelized.
+
+## CSS and other resources
+
+Preloading extends beyond JavaScript to other types of resources like CSS too. This works differently from preloading client components.
+
+As described above, client components are represented as special Client Reference objects in the JSX tree. But CSS is often not included in the JSX tree at all:
+
+```jsx
+import './Button.css';
+
+export function Button() {
+  return <button className="button">Button</button>;
+}
+```
+
+Here, `Button.css` is imported as a _side effect_. In client-only apps, the bundler injects a `<link rel="stylesheet">` element into the DOM when the JavaScript runs. But that doesn't work on the server, because there is no DOM available there.
+
+React supports rendering `<link>` elements in JSX, so you could do something like this instead:
+
+```jsx
+export function Button() {
+  return (
+    <>
+      <link rel="stylesheet" href="Button.css" />
+      <button className="button">Button</button>
+    </>
+  );
+}
+```
+
+But this introduces three problems:
+
+1. A separate `<link>` element is rendered for each instance of the `Button` component on the page instead of only a single one in the `<head>`.
+2. The `<button>` element will be rendered synchronously while the CSS loads asynchronously, resulting in a flash of unstyled content (FOUC).
+3. The CSS for each component is a separate HTTP request instead of bundled together with the CSS for other components.
+
+React provides solutions for the first two problems, and Parcel solves the third.
+
+React 19 added special support for the [`<link>`](https://react.dev/reference/react-dom/components/link) element. When rendered with the `precedence` prop, stylesheets will be automatically hoisted into the `<head>` and deduplicated. In addition, when rendered inside a `<Suspense>` boundary, React will wait for the stylesheet to load before revealing content that depends on it, avoiding FOUC.
+
+To enable CSS bundling, Parcel will automatically inject `<link rel="stylesheet">` elements into the JSX tree. This means you can write components with CSS imports as already works on the client, and they will automatically work during SSR too.
+
+This happens automatically at `"use client"` and dynamic `import()` boundaries. When importing a component that depends on CSS, Parcel wraps the component in a Fragment with its resources as siblings. So importing Button like this:
+
+```jsx
+import {Button} from './Button';
+```
+
+resolves to a module like this:
+
+```jsx
+const ClientButton = createClientReference('aX49a6', 'Button', ['client.bundle.js']);
+
+export function Button(props) {
+  return (
+    <>
+      <link rel="stylesheet" href="Button.bundle.css" precedence="default" />
+      <ClientButton {...props} />
+    </>
+  );
+}
+```
+
+Parcel also uses [ReactDOM.preinit](https://react.dev/reference/react-dom/preinit) to start loading CSS on the client immediately, as soon as `import()` is called, without waiting for re-rendering to finish.
+
+This allows CSS imports to be bundled and injected into the JSX tree, both during SSR and in the browser. It works for CSS imports in both Server and Client components, without requiring the developer to implement anything themselves.
+
+## To be continued...
+
+I'll stop here for now, but there is much more to cover in future posts. I barely mentioned Server Actions here, and there's some neat stuff around progressively loaded import maps that I'd like to share. Please let me know on social media if you found this post interesting and what you'd like to hear more about!

@@ -19,6 +19,7 @@
     "build": "parcel build"
   },
   "dependencies": {
+    "@hpcc-js/wasm-graphviz": "^1.9.2",
     "@parcel/rsc": "^2.14.3",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
