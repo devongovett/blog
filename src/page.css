@@ -162,18 +162,21 @@ pre {
       fill: light-dark(black, white);
     }
 
-    [fill=black] {
-      fill: light-dark(black, white);
-    }
-
-    [stroke=black] {
-      stroke: light-dark(black, white);
-    }
-
     .node {
       ellipse, path {
         fill: light-dark(white, #333);
         stroke: light-dark(black, #aaa);
+      }
+    }
+
+    .edge {
+      path {
+        stroke: light-dark(black, white);
+      }
+
+      polygon {
+        fill: light-dark(black, white);
+        stroke: light-dark(black, white);
       }
     }
 
