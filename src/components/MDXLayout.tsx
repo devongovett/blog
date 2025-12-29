@@ -11,6 +11,13 @@ interface LayoutProps extends PageProps {
   children: ReactNode
 }
 
+let langs = {};
+// @ts-ignore
+for (let key in treeSitter.Language) {
+  // @ts-ignore
+  langs[key.toLowerCase()] = treeSitter.Language[key];
+}
+
 export default function Layout({children, pages, currentPage}: LayoutProps) {
   return (
     <html lang="en">
@@ -49,7 +56,7 @@ export default function Layout({children, pages, currentPage}: LayoutProps) {
                   return (
                     <pre>
                       {/* @ts-ignore */}
-                      <code dangerouslySetInnerHTML={{ __html: treeSitter.highlight(props.children, treeSitter.Language[props.lang?.toUpperCase() || 'JS']) }} />
+                      <code dangerouslySetInnerHTML={{ __html: treeSitter.highlight(props.children, langs[props.lang || 'js']) }} />
                     </pre>
                   );
                 }

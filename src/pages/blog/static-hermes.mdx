@@ -1,0 +1,181 @@
+import Layout from '../../components/MDXLayout';
+export default Layout;
+
+export const description = 'Lately, I\'ve been working on porting more of Parcel to Rust, and investigating ways to embed JS-based plugins. This post describes how I used Static Hermes to compile Less.js to a native C library that can be called from Rust.';
+export const date = '2025-12-29';
+
+# How to compile JavaScript to C with Static Hermes
+
+Lately, I've been working on porting more of [Parcel](https://parceljs.org) to Rust. One of the challenges with Rust-based tools is how to support plugins. Many of the most common tools already have Rust-based equivalents: [SWC](https://swc.rs) and [OXC](https://oxc.rs) for JavaScript, [Lightning CSS](https://lightningcss.dev) for CSS, [oxvg](https://github.com/noahbald/oxvg) for SVG, etc. But other popular tools like React Compiler, Less, and Sass, are still written in JavaScript, so we need a way to run these inside of Rust-based tools.
+
+One way to do this is by embedding the Rust core inside Node using [napi](https://napi.rs). In this model, there is a JavaScript entry point to the program, which calls into Rust. When the Rust code wants to call a JS-based plugin, it calls back into the JavaScript engine. That's how JS plugins are implemented in Lightning CSS. There is some overhead to this: when I built Lightning CSS, I measured a ~7x slowdown when running JS plugins vs not.
+
+Another way to do something similar is with cross-process communication. In this model, there's a Rust entry point, which spawns sub-processes to run Node when it needs to run a plugin. This also has significant overhead.
+
+## Static Hermes
+
+[Hermes](https://github.com/facebook/hermes) is Facebook's custom JavaScript engine for React Native. The latest iteration, known as Static Hermes, takes a new approach: rather than running a JIT (just-in-time) compiler at runtime, it compiles JavaScript to bytecode or native binaries ahead of time. This reduces the startup time needed to compile and optimize the code at runtime, which can be significant on phones.
+
+Static Hermes works by compiling JavaScript into C code, which is then compiled to machine code using [LLVM](https://llvm.org). This produces a completely standalone binary that can be run without a JavaScript virtual machine. The compiled C code uses some helper functions provided by Hermes, which are statically linked inside the binary (just like the standard library in languages like Rust). Not only does this improve performance by taking advantage of LLVM's advanced optimizations, but it also makes it super easy to embed JavaScript into programs written in other languages that can interface with C like Rust.
+
+## Compiling Less.js to C
+
+I set out to try to build a [Less](https://lesscss.org) plugin for Parcel that I could call from Rust. With Static Hermes, I was able to compile it to a C library, which could then be called from Rust.
+
+The first step was to bundle the [less](https://www.npmjs.com/package/less) npm module into a single JavaScript file without any external dependencies. Hermes doesn't support Node modules, so everything must be self contained. It also cannot depend on any built-in Node modules like `fs` or `path`. Naturally, I used Parcel to do this.
+
+```js
+// Use the environment-agnostic build of Less, and shim the PluginLoader.
+const less = require('less/lib/less').default({}, {});
+less.PluginLoader = function() {}
+
+// Expose a global function to compile a string of Less code to CSS.
+function compile(input) {
+  let result;
+  less.render(input, (err, res) => {
+    result = res.css;
+  });
+  return result;
+}
+
+globalThis.compile = compile;
+```
+
+Compiling with Parcel:
+
+```bash
+parcel build less.js --no-optimize
+```
+
+This produces `dist/less.js`, a fully self contained file that exposes a global `compile` function.
+
+Next, we compile this to a C library. First, you'll need to build Static Hermes itself. Follow their [instructions](https://github.com/facebook/hermes/blob/static_h/doc/BuildingAndRunning.md) for that.
+
+```bash
+./build_release/bin/shermes -O -c -exported-unit=less dist/less.js
+```
+
+* `-O` creates an optimized build
+* `-c` compiles to a native object file which can later be linked into a larger program
+* `-exported-unit=less` tells Hermes to skip creating a `main` function and export a compilation unit called `less`
+
+This produces a `less.o` object file. (If you want to see the C source code that was compiled, replace the `-c` compiler flag with `-emit-c`.)
+
+Next, we need a small C wrapper to call the JavaScript function.
+
+```c
+// compile.c
+#include <stdlib.h>
+#include <hermes/VM/static_h.h>
+#include <hermes/hermes.h>
+
+// Declaration for the `less` unit created by Static Hermes.
+// This will come from `less.o`
+extern "C" SHUnit sh_export_less;
+
+extern "C" char* compile_less(char *in) {
+  // Initialize the hermes runtime.
+  static SHRuntime *s_shRuntime = nullptr;
+  static facebook::hermes::HermesRuntime *s_hermes = nullptr;
+
+  if (s_shRuntime == nullptr) {
+    s_shRuntime = _sh_init(0, nullptr);
+    s_hermes = _sh_get_hermes_runtime(s_shRuntime);
+    if (!_sh_initialize_units(s_shRuntime, 1, &sh_export_less)) {
+      abort();
+    }
+  }
+
+  // Get the global `compile` function and call it.
+  std::string res = s_hermes->global()
+    .getPropertyAsFunction(*s_hermes, "compile")
+    .call(*s_hermes, std::string(in))
+    .getString(*s_hermes)
+    .utf8(*s_hermes);
+
+  // Convert the C++ string into a C string we can return.
+  char* result = new char[res.size() + 1];
+  strcpy(result, res.c_str());
+  return result;
+}
+```
+
+Compile this to another object file with `clang++`:
+
+```bash
+clang++ -c -O3 -std=c++17 -IAPI -IAPI/jsi -Iinclude -Ipublic -Ibuild_release/lib/config compile.c
+```
+
+* `-c` produces an object file
+* `-O3` produces an optimized build
+* `-std=c++17` enables C++ 17 language features
+* `-I` includes headers from Hermes
+
+This produces a `compile.o` object file.
+
+Finally, we need to call the `compile_less` C function from Rust.
+
+```rust
+// main.rs
+use std::ffi::{CStr, CString};
+use std::os::raw::c_char;
+
+// Declare the C function we will call.
+extern "C" {
+  fn compile_less(input: *const c_char) -> *const c_char;
+}
+
+fn main() {
+  // Create a C string.
+  let input = CString::new(
+    r#"// Variables
+      @link-color: #428bca;
+      @link-color-hover: darken(@link-color, 10%);
+
+      a,
+      .link {
+        color: @link-color;
+      }
+      a:hover {
+        color: @link-color-hover;
+      }
+      .widget {
+        color: #fff;
+        background: @link-color;
+      }
+    "#,
+  )
+  .unwrap();
+
+  // Call the C function and convert it to a Rust String.
+  let res = unsafe {
+    let ptr = compile_less(input.as_ptr());
+    CStr::from_ptr(ptr).to_string_lossy().into_owned()
+  };
+
+  // Print it.
+  println!("OUTPUT: {}", res);
+}
+```
+
+Compile this with `rustc` and link everything together:
+
+```bash
+rustc main.rs -O -C link-arg=less.o -C link-arg=compile.o -Lbuild_release/lib -Lbuild_release/jsi -Lbuild_release/tools/shermes -lshermes_console_a -lhermesvm_a -ljsi -lc++ -Lbuild_release/external/boost/boost_1_86_0/libs/context/ -lboost_context -l framework=Foundation
+```
+
+* `-O` produces an optimized build
+* `-C link-arg=less.o -C link-arg=compile.o` links with the C libraries we created earlier
+* `-L ...` adds library search paths
+* `-l ...` links with Hermes libraries and dependencies
+* `-l framework=Foundation` specific to macOS, to link with the Foundation framework
+
+Now you can run the program and see it compile Less via Rust! 🪄
+
+```bash
+./main
+```
+
+## Conclusion
+
+This is a simple first example, but it shows the potential for native tools to integrate with pre-compiled JS-based plugins, without needing to embed an interpreter. Another potential use-case is the [React Compiler](https://react.dev/learn/react-compiler) (based on Babel), which for many people is one of the only remaining JS-based tools in their build pipeline. I tried this briefly but ran into a few problems, which may be missing features at the moment.
