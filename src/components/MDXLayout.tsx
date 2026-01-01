@@ -32,6 +32,7 @@ export default function Layout({children, pages, currentPage}: LayoutProps) {
         <meta property="og:url" content={`https://devongovett.me${currentPage.url}`} />
         <meta name="twitter:card" content="summary" />
         <meta name="twitter:site" content="@devongovett" />
+        <link rel="alternate" type="application/rss+xml" title="Devon's Blog RSS Feed" href="/feed.xml" />
       </head>
       <body>
         <header>

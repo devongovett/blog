@@ -16,7 +16,7 @@
   },
   "scripts": {
     "start": "parcel",
-    "build": "parcel build"
+    "build": "parcel build && node scripts/generate-rss.js"
   },
   "dependencies": {
     "@hpcc-js/wasm-graphviz": "^1.9.2",
